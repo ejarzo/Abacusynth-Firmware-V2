@@ -2,7 +2,7 @@
 TARGET = AbcsFirmwareV2
 
 # Sources
-CPP_SOURCES = AbcsFirmwareV2.cpp 
+CPP_SOURCES = AbcsFirmwareV2.cpp
 
 # Library Locations
 LIBDAISY_DIR = ../../DaisyExamples/libDaisy
