@@ -3,15 +3,17 @@
 #include <stdio.h>
 #include <string.h>
 
+#define NUM_POLY_VOICES 5
+
 #define NUM_WAVEFORMS 4
 #define NUM_LFO_TARGETS 2
-#define NUM_POLY_VOICES 4
 #define LONG_PRESS_THRESHOLD 700
 #define NUM_RODS 4
 
 #include "./RodOscillators.h"
 #include "./RodSensors.h"
 #include "./VoiceManager.h"
+#include "./DistanceSensorManager.h"
 
 using namespace daisy;
 using namespace daisy::seed;
@@ -49,41 +51,50 @@ using namespace daisysp;
 #define PIN_ENC_4_B 1
 #define PIN_ENC_4_BTN 2
 
+/* Which multiplexer input maps to which rod */
+uint8_t tcaIndexMap[NUM_RODS] = {
+    TCA_IDX_1,
+    TCA_IDX_2,
+    TCA_IDX_3,
+    TCA_IDX_4,
+};
+
+/* Available waveforms */
 uint8_t waveforms[NUM_WAVEFORMS] = {
-    // Oscillator::WAVE_SQUARE,
     Oscillator::WAVE_SIN,
     Oscillator::WAVE_POLYBLEP_TRI,
     Oscillator::WAVE_POLYBLEP_SAW,
     Oscillator::WAVE_POLYBLEP_SQUARE,
-    // Oscillator::WAVE_SQUARE,
 };
 
 DaisySeed hw;
 MidiUartHandler midi;
+MidiUartHandler::Config midi_config;
 
-float amps[NUM_POLY_VOICES];
-
+/* Test filter */
 Svf filt;
 
-static VoiceManager<NUM_POLY_VOICES> voice_handler;
-Voice *voices = voice_handler.GetVoices();
+/* Polyphony voices */
+static VoiceManager<NUM_POLY_VOICES> voiceHandler;
+Voice *voices = voiceHandler.GetVoices();
 
-RodOscillators synthVoices[NUM_RODS];
-AbcsRod abcsRods[NUM_RODS];
+/* ADSR amplitude envelopes for each voice */
+float amps[NUM_POLY_VOICES];
 
+/* DSP for each rod */
+RodOscillators rodOscillators[NUM_RODS];
+
+/* Sensor parsing for each rod */
+RodSensors rodSensors[NUM_RODS];
+
+/* Managing the I2C multiplexer for the distance sensors */
+DistanceSensorManager distanceSensorManager;
+
+/* Gain */
 AnalogControl gainPot;
-// Line gainLine;
-
 float gain = 1.f;
-float prevGain = gain;
-float newGain = 0.0f;
-// uint8_t gainLineFinished;
 
-void InitMidi()
-{
-    MidiUartHandler::Config midi_config;
-    midi.Init(midi_config);
-}
+/* ============================================================================ */
 
 void NextSamples(float &sig)
 {
@@ -99,7 +110,7 @@ void NextSamples(float &sig)
     /* Pass amps to each rod */
     for (size_t i = 0; i < NUM_RODS; i++)
     {
-        result += synthVoices[i].Process(amps);
+        result += rodOscillators[i].Process(amps);
     }
 
     sig = result / NUM_RODS;
@@ -111,19 +122,27 @@ void AudioCallback(AudioHandle::InterleavingInputBuffer in,
 {
     for (size_t i = 0; i < NUM_RODS; i++)
     {
-        abcsRods[i].Process();
-        float rotationSpeed = abcsRods[i].GetRotationSpeed();
-        int harmonic = abcsRods[i].GetEncoderVal();
-        int waveform = abcsRods[i].GetWaveformIndex();
-        // hw.PrintLine("Speed %f", rotationSpeed);
-        synthVoices[i].SetHarmonic(harmonic);
-        synthVoices[i].SetLfoFreq(rotationSpeed);
-        synthVoices[i].SetOscWaveform(waveforms[waveform]);
+        rodSensors[i].Process();
+        float rotationSpeed = rodSensors[i].GetRotationSpeed();
+        int harmonic = rodSensors[i].GetEncoderVal();
+        int waveform = rodSensors[i].GetWaveformIndex();
+
+        rodOscillators[i].SetHarmonic(harmonic);
+        rodOscillators[i].SetLfoFreq(rotationSpeed);
+        rodOscillators[i].SetOscWaveform(waveforms[waveform]);
+
+        /* TODO clean up */
+        int addrIdx = i;
+        if (i == 2)
+            addrIdx = 3;
+        if (i == 3)
+            addrIdx = 2;
+        rodOscillators[i].SetRange(distanceSensorManager.GetRange(addrIdx));
 
         /* TODO verify */
-        if (abcsRods[i].GetLongPress())
+        if (rodSensors[i].GetLongPress())
         {
-            synthVoices[i].IncrementLfoTarget();
+            rodOscillators[i].IncrementLfoTarget();
         }
     }
 
@@ -148,18 +167,13 @@ void HandleMidiMessage(MidiEvent m)
     {
         hw.PrintLine("Note ON:\t%d\t%d\t%d\r\n", m.channel, m.data[0], m.data[1]);
         NoteOnEvent p = m.AsNoteOn();
-        // This is to avoid Max/MSP Note outs for now..
-        // if (m.data[1] != 0)
-        // {
-        //     p = m.AsNoteOn();
-        //     for (size_t i = 0; i < NUM_OSCS; i++)
-        //     {
-        //         /* code */
-        //         oscillators[i].SetFreq(mtof(p.note + i * 5));
-        //         oscillators[i].SetAmp((p.velocity / 127.0f));
-        //     }
-        // }
-        Voice *v = voice_handler.FindFreeVoice(p.note);
+
+        /* Note on could have 0 velocity? */
+        if (m.data[1] == 0)
+            return;
+
+        /* Get voice */
+        Voice *v = voiceHandler.FindFreeVoice(p.note);
         if (v == NULL)
             return;
 
@@ -172,7 +186,7 @@ void HandleMidiMessage(MidiEvent m)
             Voice *v = &voices[i];
             for (size_t j = 0; j < NUM_RODS; j++)
             {
-                synthVoices[j].SetFundamentalFreq(mtof(v->GetNote()), i);
+                rodOscillators[j].SetFundamentalFreq(mtof(v->GetNote()), i);
             }
         }
 
@@ -184,11 +198,12 @@ void HandleMidiMessage(MidiEvent m)
     {
         hw.PrintLine("Note OFF:\t%d\t%d\t%d\r\n", m.channel, m.data[0], m.data[1]);
         NoteOffEvent p = m.AsNoteOff();
-        voice_handler.OnNoteOff(p.note, p.velocity);
+        voiceHandler.OnNoteOff(p.note, p.velocity);
         break;
     }
     case ControlChange:
     {
+        /* TODO: update with pitch bend */
         ControlChangeEvent p = m.AsControlChange();
         switch (p.control_number)
         {
@@ -210,39 +225,40 @@ void HandleMidiMessage(MidiEvent m)
     }
 }
 
-// Main -- Init, and Midi Handling
+/* =============================================================================== */
+
 int main(void)
 {
-    // Init
     float sample_rate;
+    int count = 0;
+
     hw.Init();
     hw.SetAudioBlockSize(4);
 
-    // hw.usb_handle.Init(UsbHandle::FS_INTERNAL);
-
+    /* Serial log */
     hw.StartLog(true);
     System::Delay(250);
 
     sample_rate = hw.AudioSampleRate();
     // callback_rate = hw.AudioCallbackRate();
-    voice_handler.Init(sample_rate);
 
-    /* Gain */
-    // gainLine.Init(sample_rate);
+    /* Polyphony Voices */
+    voiceHandler.Init(sample_rate);
+
+    /* Distance sensors */
+    distanceSensorManager.Init(&hw);
 
     /* Init Rod Oscillators */
     for (size_t i = 0; i < NUM_RODS; i++)
     {
-        synthVoices[i].Init(sample_rate);
-        synthVoices[i].SetOscWaveform(Oscillator::WAVE_POLYBLEP_SQUARE);
-        // synthVoices[i].SetOscWaveform(0);
-        synthVoices[i].SetHarmonic(i + 1);
+        rodOscillators[i].Init(sample_rate);
     }
 
-    abcsRods[0].Init(hw.GetPin(PIN_BREAKBEAM_IN_1), hw.GetPin(PIN_ENC_1_A), hw.GetPin(PIN_ENC_1_B), hw.GetPin(PIN_ENC_1_BTN));
-    abcsRods[1].Init(hw.GetPin(PIN_BREAKBEAM_IN_2), hw.GetPin(PIN_ENC_2_A), hw.GetPin(PIN_ENC_2_B), hw.GetPin(PIN_ENC_2_BTN));
-    abcsRods[2].Init(hw.GetPin(PIN_BREAKBEAM_IN_3), hw.GetPin(PIN_ENC_3_A), hw.GetPin(PIN_ENC_3_B), hw.GetPin(PIN_ENC_3_BTN));
-    abcsRods[3].Init(hw.GetPin(PIN_BREAKBEAM_IN_4), hw.GetPin(PIN_ENC_4_A), hw.GetPin(PIN_ENC_4_B), hw.GetPin(PIN_ENC_4_BTN));
+    /* Rod Sensors */
+    rodSensors[0].Init(1, hw.GetPin(PIN_BREAKBEAM_IN_1), hw.GetPin(PIN_ENC_1_A), hw.GetPin(PIN_ENC_1_B), hw.GetPin(PIN_ENC_1_BTN));
+    rodSensors[1].Init(2, hw.GetPin(PIN_BREAKBEAM_IN_2), hw.GetPin(PIN_ENC_2_A), hw.GetPin(PIN_ENC_2_B), hw.GetPin(PIN_ENC_2_BTN));
+    rodSensors[2].Init(3, hw.GetPin(PIN_BREAKBEAM_IN_3), hw.GetPin(PIN_ENC_3_A), hw.GetPin(PIN_ENC_3_B), hw.GetPin(PIN_ENC_3_BTN));
+    rodSensors[3].Init(4, hw.GetPin(PIN_BREAKBEAM_IN_4), hw.GetPin(PIN_ENC_4_A), hw.GetPin(PIN_ENC_4_B), hw.GetPin(PIN_ENC_4_BTN));
 
     filt.Init(sample_rate);
 
@@ -253,8 +269,10 @@ int main(void)
     hw.adc.Init(&adcConfig, 1);
     hw.adc.Start();
 
-    InitMidi();
+    /* MIDI */
+    midi.Init(midi_config);
 
+    /* Start */
     hw.StartAudio(AudioCallback);
     midi.StartReceive();
 
@@ -268,9 +286,22 @@ int main(void)
         }
 
         // Set the onboard LED
-        hw.SetLed(abcsRods[0].GetPulse());
+        // hw.SetLed(rodSensors[0].GetPulse());
 
-        /* TODO change to AnalogControl */
+        /* Distance Sensors are slow */
+        if (count >= 10000)
+        {
+            distanceSensorManager.UpdateRanges();
+            // for (size_t i = 0; i < 4; i++)
+            // {
+            //     int range = distanceSensorManager.GetRange(i);
+            //     hw.PrintLine("range %d %d", i, range);
+            // }
+            count = 0;
+        }
+        count++;
+
+        /* TODO change to AnalogControl? */
         gain = 1.f - hw.adc.GetFloat(0);
         if (gain < 0.04f)
             gain = 0.0f;

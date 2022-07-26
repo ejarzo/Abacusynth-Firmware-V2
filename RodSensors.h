@@ -7,7 +7,7 @@ using namespace daisy;
 using namespace daisy::seed;
 using namespace daisysp;
 
-class AbcsRod
+class RodSensors
 {
 private:
     // int tcaIndex;
@@ -115,18 +115,13 @@ private:
     }
 
 public:
-    AbcsRod(){};
-    ~AbcsRod(){};
-    void Init(dsy_gpio_pin pinBreakBeam, dsy_gpio_pin pinEnc1, dsy_gpio_pin pinEnc2, dsy_gpio_pin pinEncBtn)
+    RodSensors(){};
+    ~RodSensors(){};
+    void Init(int initialHarmonic, dsy_gpio_pin pinBreakBeam, dsy_gpio_pin pinEnc1, dsy_gpio_pin pinEnc2, dsy_gpio_pin pinEncBtn)
     {
-        // rodEncoder.Init(callback_rate, pinEnc1_, pinEnc2_, pinEncBtn_, INPUT_PULLUP, INPUT_PULLUP, INPUT_PULLUP);
+        encoderVal = initialHarmonic;
         rodEncoder.Init(pinEnc1, pinEnc2, pinEncBtn);
-        // rodEncoder.Init()
-        // breakBeamSwitch.Init(callback_rate, false, pinBreakBeam_, INPUT_PULLUP);
         breakBeamSwitch.Init(pinBreakBeam);
-        // breakBeamSwitch.Init()
-        // Wire.begin();
-        // vl.begin();
     };
     float GetDistance();
     float GetRotationSpeed()
@@ -210,7 +205,7 @@ public:
     }
 };
 
-float AbcsRod::GetDistance()
+float RodSensors::GetDistance()
 {
     // tcaselect(tcaIndex);
     /* Todo: readStatus? */

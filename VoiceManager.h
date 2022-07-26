@@ -1,10 +1,5 @@
-// #include "DaisyDuino.h"
 #include "daisy_pod.h"
 #include "daisysp.h"
-// #include "./utils.h"
-
-#include <string>
-// #include "./adsr2/adsr2.h"
 
 using namespace daisysp;
 
@@ -18,13 +13,8 @@ public:
     void Init(float sample_rate)
     {
         active_ = false;
-        setActiveOnNext = false;
+        velocity_ = 1.f;
         env_.Init(sample_rate, 1);
-        interruptGain = 0.f;
-        velLine.Init(sample_rate);
-        isFadeFinished = false;
-        fading = false;
-
         setADSR(0.005f, 0.1f, 0.5f, 0.2f);
     }
 
@@ -40,14 +30,13 @@ public:
     {
         if (active_)
         {
-            velGain = velLine.Process(&isFadeFinished);
             float amp;
             amp = env_.Process(env_gate_);
             if (!env_.IsRunning())
             {
                 active_ = false;
             }
-            return amp * velGain;
+            return amp * velocity_;
         }
         return 0.f;
     }
@@ -55,7 +44,7 @@ public:
     void OnNoteOn(int note, int newVelocity)
     {
         note_ = note;
-        velocity_ = newVelocity;
+        velocity_ = sqrt(newVelocity / 127.f);
     }
 
     void TriggerNote()
@@ -65,16 +54,12 @@ public:
             env_.Retrigger(false);
         }
 
-        /* Ramp to new velocity */
-        velLine.Start(velGain, velocity_ / 127.f, 0.02f);
-
         active_ = true;
         env_gate_ = true;
     }
 
     void OnNoteOff()
     {
-        // Serial.println("Voice OnNoteOff Called");
         env_gate_ = false;
     }
 
@@ -84,15 +69,10 @@ public:
 
 private:
     Adsr env_;
-    Line velLine;
-    uint8_t isFadeFinished;
-    float interruptGain;
-    float velGain;
-    int note_, velocity_, prevVelocity;
+    int note_;
+    float velocity_;
     bool active_;
-    bool fading;
     bool env_gate_;
-    bool setActiveOnNext;
 };
 
 /* ========================= Polyphony Voice Manager ========================= */

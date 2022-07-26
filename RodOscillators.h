@@ -19,8 +19,8 @@ private:
     float vibratoDepths[NUM_POLY_VOICES];
 
     /* TODO: use Svf? */
-    // Svf flt;
-    Tone flt;
+    Svf flt;
+    // Tone flt;
     Line gainLine;
 
     float lfoFreq;
@@ -85,6 +85,7 @@ public:
         harmonicMultiplier = 1;
 
         flt.SetFreq(filterCutoff);
+        flt.SetRes(0.1f);
         SetLfoTarget(1);
     }
 
@@ -140,7 +141,8 @@ public:
         /* Only filter saw and square */
         if (isSaw(waveform) || isSquare(waveform))
         {
-            sigOut = flt.Process(sig);
+            flt.Process(sigOut);
+            sigOut = flt.Low();
         }
 
         return sigOut * gain;
@@ -212,6 +214,7 @@ public:
 
     void SetFilterCutoff(float freq)
     {
+        /* TODO smooth? */
         filterCutoff = freq;
         flt.SetFreq(freq);
     }
