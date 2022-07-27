@@ -1,6 +1,5 @@
 // #include "daisy_seed.h"
 #include "daisysp.h"
-#include "./utils.h"
 #include <math.h>
 
 using namespace daisy;
@@ -219,9 +218,10 @@ public:
         flt.SetFreq(freq);
     }
 
-    void SetRange(int range)
+    void SetRange(float range)
     {
-        float freq = rangeToFilterFreq(range);
+        float freq = mtof(range * 110.f + 50);
+        // float freq = rangeToFilterFreq(range);
         SetFilterCutoff(freq);
 
         /* Filter sawtooth and square waves */
@@ -234,10 +234,10 @@ public:
         else
         {
             // SetFilterCutoff(15000);
-            SetGain(range / 130.f);
+            SetGain(range);
         }
 
-        if (range < 2)
+        if (range < 0.05)
         {
             SetGain(0);
         }

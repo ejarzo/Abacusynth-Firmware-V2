@@ -74,6 +74,12 @@ private:
   I2CHandle *_i2c;
   bool isActive = false;
   uint8_t range = 0;
+  int numReadings = 10;
+  int currIndex = 0;
+  uint8_t ranges[10];
+
+  float normalizedRange = 0.f;
+
   uint8_t read8(uint16_t address)
   {
     uint8_t buffer[2];
@@ -81,9 +87,7 @@ private:
     buffer[1] = uint8_t(address & 0xFF);
 
     _i2c->TransmitBlocking(VL6180X_DEFAULT_I2C_ADDR, buffer, 2, 500);
-    // i2c_dev->write(buffer, 2);
-
-    I2CHandle::Result i2cResult = _i2c->ReceiveBlocking(VL6180X_DEFAULT_I2C_ADDR, buffer, 1, 500);
+    _i2c->ReceiveBlocking(VL6180X_DEFAULT_I2C_ADDR, buffer, 1, 500);
     // if (i2cResult == I2CHandle::Result::OK)
     // {
     //     hw->PrintLine("read8 success");
@@ -102,7 +106,7 @@ private:
     buffer[0] = uint8_t(address >> 8);
     buffer[1] = uint8_t(address & 0xFF);
     buffer[2] = data;
-    I2CHandle::Result i2cResult = _i2c->TransmitBlocking(VL6180X_DEFAULT_I2C_ADDR, buffer, 3, 500);
+    _i2c->TransmitBlocking(VL6180X_DEFAULT_I2C_ADDR, buffer, 3, 500);
     // if (i2cResult == I2CHandle::Result::OK)
     // {
     //     hw->PrintLine("write8 success");
@@ -129,6 +133,27 @@ private:
 
     // Start a continuous range measurement
     write8(VL6180X_REG_SYSRANGE_START, 0x03);
+  }
+  uint8_t readRange(void)
+  {
+    // wait for device to be ready for range measurement
+    // while (!(read8(VL6180X_REG_RESULT_RANGE_STATUS) & 0x01))
+    //   ;
+
+    // Start a range measurement
+    write8(VL6180X_REG_SYSRANGE_START, 0x01);
+
+    // Poll until bit 2 is set
+    while (!(read8(VL6180X_REG_RESULT_INTERRUPT_STATUS_GPIO) & 0x04))
+      ;
+
+    // read range in mm
+    uint8_t newRange = read8(VL6180X_REG_RESULT_RANGE_VAL);
+
+    // clear interrupt
+    write8(VL6180X_REG_SYSTEM_INTERRUPT_CLEAR, 0x07);
+
+    return newRange;
   }
   void loadSettings(void)
   {
@@ -191,22 +216,22 @@ private:
     write8(0x0014, 0x24); // Configures interrupt on 'New Sample
                           // Ready threshold event'
   }
+
+  uint8_t readRangeStatus(void)
+  {
+    return (read8(VL6180X_REG_RESULT_RANGE_STATUS) >> 4);
+  }
   bool begin()
   {
-    // only needed to support setAddress()
-    // _i2c = theWire;
-
-    // if (i2c_dev)
-    //   delete i2c_dev;
-    // i2c_dev = new Adafruit_I2CDevice(_i2caddr, _i2c);
-    // if (!i2c_dev->begin())
-    //   return false;
     uint8_t modelId = read8(VL6180X_REG_IDENTIFICATION_MODEL_ID);
     uint8_t freshOutOfReset = read8(VL6180X_REG_SYSTEM_FRESH_OUT_OF_RESET);
 
     // check for expected model id
-    hw->PrintLine("ID: %x", modelId);
-    hw->PrintLine("Reset?: %x", freshOutOfReset);
+    if (DEBUG)
+    {
+      hw->PrintLine("ID: %x", modelId);
+      hw->PrintLine("Reset?: %x", freshOutOfReset);
+    }
 
     if (modelId != 0xB4)
     {
@@ -230,18 +255,27 @@ public:
   {
     hw = _hw;
     _i2c = i2c;
+    for (size_t i = 0; i < numReadings; i++)
+    {
+      ranges[i] = 0;
+    }
   };
   bool Begin()
   {
     bool res = begin();
     if (!res)
     {
-      hw->PrintLine("Error setting up");
+      if (DEBUG)
+      {
+        hw->PrintLine("Error setting up");
+      }
       return false;
     }
-
-    startRangeContinuous(50);
-
+    // startRangeContinuous(0);
+    if (DEBUG)
+    {
+      hw->PrintLine("setup done");
+    }
     isActive = true;
     return true;
   };
@@ -249,11 +283,31 @@ public:
   {
     return range;
   }
+  float GetNormalizedRange()
+  {
+    int sum = 0;
+    for (size_t i = 0; i < numReadings; i++)
+    {
+      sum += ranges[i];
+    }
+
+    float avg = sum / float(numReadings);
+
+    float normalizedRange = constrain(avg, MIN_RANGE, MAX_RANGE);
+    return mapf(normalizedRange, MIN_RANGE, MAX_RANGE, 0.f, 1.f);
+  }
   void UpdateRange()
   {
+    // uint8_t status = readRangeStatus();
+    // hw->PrintLine("Status: %d", status);
     if (isActive)
     {
-      range = read8(VL6180X_REG_RESULT_RANGE_VAL);
+      // range = read8(VL6180X_REG_RESULT_RANGE_VAL);
+      // range = readRange();
+
+      ranges[currIndex] = readRange();
+      currIndex++;
+      currIndex = currIndex % numReadings;
     }
   }
 };

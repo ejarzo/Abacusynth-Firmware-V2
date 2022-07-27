@@ -10,6 +10,12 @@
 #define LONG_PRESS_THRESHOLD 700
 #define NUM_RODS 4
 
+#define MIN_RANGE 10.f
+#define MAX_RANGE 120.f
+
+#define DEBUG true
+
+#include "./utils.h"
 #include "./RodOscillators.h"
 #include "./RodSensors.h"
 #include "./VoiceManager.h"
@@ -137,7 +143,9 @@ void AudioCallback(AudioHandle::InterleavingInputBuffer in,
             addrIdx = 3;
         if (i == 3)
             addrIdx = 2;
-        rodOscillators[i].SetRange(distanceSensorManager.GetRange(addrIdx));
+
+        // rodOscillators[i].SetRange(distanceSensorManager.GetRange(addrIdx));
+        rodOscillators[i].SetRange(distanceSensorManager.GetNormalizedRange(addrIdx));
 
         /* TODO verify */
         if (rodSensors[i].GetLongPress())
@@ -165,7 +173,10 @@ void HandleMidiMessage(MidiEvent m)
     {
     case NoteOn:
     {
-        hw.PrintLine("Note ON:\t%d\t%d\t%d\r\n", m.channel, m.data[0], m.data[1]);
+        if (DEBUG)
+        {
+            hw.PrintLine("Note ON:\t%d\t%d\t%d\r\n", m.channel, m.data[0], m.data[1]);
+        }
         NoteOnEvent p = m.AsNoteOn();
 
         /* Note on could have 0 velocity? */
@@ -196,7 +207,10 @@ void HandleMidiMessage(MidiEvent m)
     }
     case NoteOff:
     {
-        hw.PrintLine("Note OFF:\t%d\t%d\t%d\r\n", m.channel, m.data[0], m.data[1]);
+        if (DEBUG)
+        {
+            hw.PrintLine("Note OFF:\t%d\t%d\t%d\r\n", m.channel, m.data[0], m.data[1]);
+        }
         NoteOffEvent p = m.AsNoteOff();
         voiceHandler.OnNoteOff(p.note, p.velocity);
         break;
@@ -236,11 +250,13 @@ int main(void)
     hw.SetAudioBlockSize(4);
 
     /* Serial log */
-    hw.StartLog(true);
-    System::Delay(250);
+    if (DEBUG)
+    {
+        hw.StartLog(true);
+    }
+    System::Delay(200);
 
     sample_rate = hw.AudioSampleRate();
-    // callback_rate = hw.AudioCallbackRate();
 
     /* Polyphony Voices */
     voiceHandler.Init(sample_rate);
@@ -289,14 +305,17 @@ int main(void)
         // hw.SetLed(rodSensors[0].GetPulse());
 
         /* Distance Sensors are slow */
-        if (count >= 10000)
+        if (count >= 3000)
         {
             distanceSensorManager.UpdateRanges();
-            // for (size_t i = 0; i < 4; i++)
-            // {
-            //     int range = distanceSensorManager.GetRange(i);
-            //     hw.PrintLine("range %d %d", i, range);
-            // }
+            if (DEBUG)
+            {
+                for (size_t i = 0; i < 4; i++)
+                {
+                    float range = distanceSensorManager.GetNormalizedRange(i);
+                    hw.PrintLine("%d", int(range * 100.f));
+                }
+            }
             count = 0;
         }
         count++;

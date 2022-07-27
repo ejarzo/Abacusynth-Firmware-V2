@@ -28,6 +28,7 @@ private:
     DaisySeed *hw;
     bool isActive = false;
     uint8_t range = 0;
+    int activeIndex = 0;
 
     void tcaselect(uint8_t i)
     {
@@ -35,16 +36,7 @@ private:
             return;
 
         uint8_t data = 1 << i;
-        I2CHandle::Result i2cResult = _i2c.TransmitBlocking(TCAADDR, &data, 1, 500);
-
-        // if (i2cResult == I2CHandle::Result::OK)
-        // {
-        //     hw->PrintLine("Changed to address %d", data);
-        // }
-        // else
-        // {
-        //     hw->PrintLine("tcaselect error");
-        // }
+        _i2c.TransmitBlocking(TCAADDR, &data, 1, 500);
     }
 
     void PrintAddresses()
@@ -82,31 +74,36 @@ public:
     {
         hw = _hw;
         _i2c.Init(_i2c_config);
-        // PrintAddresses();
+        if (DEBUG)
+        {
+            PrintAddresses();
+        }
 
         for (size_t i = 0; i < NUM_SENSORS; i++)
         {
             tcaselect(i);
-            hw->PrintLine("Init sensor %d", i);
+            // hw->PrintLine("Init sensor %d", i);
             vl[i].Init(_hw, &_i2c);
             bool res = vl[i].Begin();
-            if (!res)
-            {
-                hw->PrintLine("Error setting up");
-            }
+            // if (!res)
+            // {
+            //     hw->PrintLine("Error setting up");
+            // }
         }
     };
     uint8_t GetRange(int idx)
     {
-        // tcaselect(idx);
         return vl[idx].GetRange();
+    }
+    float GetNormalizedRange(int idx)
+    {
+        return vl[idx].GetNormalizedRange();
     }
     void UpdateRanges()
     {
-        for (size_t i = 0; i < NUM_SENSORS; i++)
-        {
-            tcaselect(i);
-            vl[i].UpdateRange();
-        }
+        tcaselect(activeIndex);
+        vl[activeIndex].UpdateRange();
+        activeIndex++;
+        activeIndex = activeIndex % NUM_SENSORS;
     }
 };
