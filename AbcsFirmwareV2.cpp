@@ -3,7 +3,9 @@
 #include <stdio.h>
 #include <string.h>
 
-#define NUM_POLY_VOICES 5
+#define DEBUG false
+
+#define MAX_POLYPHONY 5
 
 #define NUM_WAVEFORMS 4
 #define NUM_LFO_TARGETS 2
@@ -12,8 +14,6 @@
 
 #define MIN_RANGE 10.f
 #define MAX_RANGE 120.f
-
-#define DEBUG true
 
 #include "./utils.h"
 #include "./RodOscillators.h"
@@ -81,17 +81,17 @@ MidiUartHandler::Config midi_config;
 Svf filt;
 
 /* Polyphony voices */
-static VoiceManager<NUM_POLY_VOICES> voiceHandler;
+static VoiceManager<MAX_POLYPHONY> voiceHandler;
 Voice *voices = voiceHandler.GetVoices();
 
 /* ADSR amplitude envelopes for each voice */
-float amps[NUM_POLY_VOICES];
+float amps[MAX_POLYPHONY];
 
 /* DSP for each rod */
-RodOscillators rodOscillators[NUM_RODS];
+static RodOscillators<MAX_POLYPHONY> rodOscillators[NUM_RODS];
 
 /* Sensor parsing for each rod */
-RodSensors rodSensors[NUM_RODS];
+static RodSensors rodSensors[NUM_RODS];
 
 /* Managing the I2C multiplexer for the distance sensors */
 DistanceSensorManager distanceSensorManager;
@@ -100,14 +100,30 @@ DistanceSensorManager distanceSensorManager;
 AnalogControl gainPot;
 float gain = 1.f;
 
+int adsrMode = 1;
+
+size_t currentPolyphony = MAX_POLYPHONY;
+
 /* ============================================================================ */
+void SetPolyphony(size_t newPolyphony)
+{
+    if (currentPolyphony == newPolyphony)
+        return;
+
+    currentPolyphony = newPolyphony;
+    voiceHandler.SetCurrentPolyphony(newPolyphony);
+    for (size_t j = 0; j < NUM_RODS; j++)
+    {
+        rodOscillators[j].SetCurrentPolyphony(newPolyphony);
+    }
+}
 
 void NextSamples(float &sig)
 {
     float result = 0.0;
 
     /* Get amplitude envelopes from voices */
-    for (size_t i = 0; i < NUM_POLY_VOICES; i++)
+    for (size_t i = 0; i < currentPolyphony; i++)
     {
         Voice *v = &voices[i];
         amps[i] = v->Process();
@@ -144,10 +160,7 @@ void AudioCallback(AudioHandle::InterleavingInputBuffer in,
         if (i == 3)
             addrIdx = 2;
 
-        // rodOscillators[i].SetRange(distanceSensorManager.GetRange(addrIdx));
         rodOscillators[i].SetRange(distanceSensorManager.GetNormalizedRange(addrIdx));
-
-        /* TODO verify */
         if (rodSensors[i].GetLongPress())
         {
             rodOscillators[i].IncrementLfoTarget();
@@ -165,19 +178,61 @@ void AudioCallback(AudioHandle::InterleavingInputBuffer in,
     }
 }
 
-// Typical Switch case for Message Type.
 void HandleMidiMessage(MidiEvent m)
 {
-
     switch (m.type)
     {
+    case PitchBend:
+    {
+        PitchBendEvent p = m.AsPitchBend();
+        float divider = p.value > 0 ? 8191.f : 8192.f;
+        float semiTones = 1.f;
+        float fqPerSemiTone = semiTones / 12.f;
+        float percent = p.value / divider;
+        float fqMultiplier = pow(2.f, percent * fqPerSemiTone);
+        for (size_t j = 0; j < NUM_RODS; j++)
+        {
+            rodOscillators[j].SetPitchBend(fqMultiplier);
+        }
+        break;
+    }
     case NoteOn:
     {
+
+        NoteOnEvent p = m.AsNoteOn();
         if (DEBUG)
         {
-            hw.PrintLine("Note ON:\t%d\t%d\t%d\r\n", m.channel, m.data[0], m.data[1]);
+            hw.PrintLine("Note ON:\t%d\t%d\t%d\r\n", p.channel, p.note, p.velocity);
         }
-        NoteOnEvent p = m.AsNoteOn();
+
+        /* zero indexed */
+        int channel = p.channel + 1;
+
+        /* "Hack" to set ADSR based on MIDI channel */
+        if (adsrMode != channel)
+        {
+            adsrMode = channel;
+            switch (adsrMode)
+            {
+            case 2:
+                voiceHandler.setADSR(3.f, 2.f, 0.3f, 3.f);
+                SetPolyphony(MAX_POLYPHONY);
+                break;
+            case 3:
+                voiceHandler.setADSR(0.005f, 9.f, 0.1f, 2.f);
+                SetPolyphony(MAX_POLYPHONY);
+                break;
+            case 4:
+                voiceHandler.setADSR(0.001f, 0.08f, 0.4f, 0.04f);
+                SetPolyphony(1);
+                break;
+
+            default:
+                voiceHandler.setADSR(0.06f, 0.1f, 0.6f, 0.2f);
+                SetPolyphony(MAX_POLYPHONY);
+                break;
+            }
+        }
 
         /* Note on could have 0 velocity? */
         if (m.data[1] == 0)
@@ -192,7 +247,7 @@ void HandleMidiMessage(MidiEvent m)
         v->OnNoteOn(p.note, p.velocity);
 
         /* Update oscillators with new note */
-        for (size_t i = 0; i < NUM_POLY_VOICES; i++)
+        for (size_t i = 0; i < currentPolyphony; i++)
         {
             Voice *v = &voices[i];
             for (size_t j = 0; j < NUM_RODS; j++)
@@ -305,17 +360,17 @@ int main(void)
         // hw.SetLed(rodSensors[0].GetPulse());
 
         /* Distance Sensors are slow */
-        if (count >= 3000)
+        if (count >= 8000)
         {
             distanceSensorManager.UpdateRanges();
-            if (DEBUG)
-            {
-                for (size_t i = 0; i < 4; i++)
-                {
-                    float range = distanceSensorManager.GetNormalizedRange(i);
-                    hw.PrintLine("%d", int(range * 100.f));
-                }
-            }
+            // if (DEBUG)
+            // {
+            //     for (size_t i = 0; i < 4; i++)
+            //     {
+            //         float range = distanceSensorManager.GetNormalizedRange(i);
+            //         hw.PrintLine("%d", int(range * 100.f));
+            //     }
+            // }
             count = 0;
         }
         count++;

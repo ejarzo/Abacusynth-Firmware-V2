@@ -5,19 +5,19 @@
 using namespace daisy;
 using namespace daisysp;
 
+template <size_t max_polyphony>
 class RodOscillators
 {
 private:
-    Oscillator oscillators[NUM_POLY_VOICES];
+    Oscillator oscillators[max_polyphony];
 
     /* Fundamental frequencies for each voice */
-    float oscFreqs[NUM_POLY_VOICES];
+    float oscFreqs[max_polyphony];
     /* Real frequencies after multiplied by harmonic */
-    float realFreqs[NUM_POLY_VOICES];
+    float realFreqs[max_polyphony];
     /* Depth of vibrato for each voice */
-    float vibratoDepths[NUM_POLY_VOICES];
+    float vibratoDepths[max_polyphony];
 
-    /* TODO: use Svf? */
     Svf flt;
     // Tone flt;
     Line gainLine;
@@ -26,6 +26,8 @@ private:
     float lfoDepth;
     float prevDepth;
 
+    size_t currentPolyphony;
+
     uint8_t waveform;
     uint8_t lfoTarget;
     uint8_t harmonicMultiplier;
@@ -33,6 +35,7 @@ private:
     float filterCutoff;
     float prevFilterCutoff;
 
+    float pitchBend;
     float vibratoDepth;
     float gain;
     uint8_t gainLineFinished;
@@ -46,7 +49,7 @@ private:
 
     void UpdateOscFreqs()
     {
-        for (size_t i = 0; i < NUM_POLY_VOICES; i++)
+        for (size_t i = 0; i < currentPolyphony; i++)
         {
             float fq = oscFreqs[i] * harmonicMultiplier;
             realFreqs[i] = fq;
@@ -62,7 +65,7 @@ public:
 
     void Init(float sample_rate)
     {
-        for (size_t i = 0; i < NUM_POLY_VOICES; i++)
+        for (size_t i = 0; i < max_polyphony; i++)
         {
             oscFreqs[i] = 0.0f;
             realFreqs[i] = 0.0f;
@@ -73,10 +76,13 @@ public:
         flt.Init(sample_rate);
         gainLine.Init(sample_rate);
 
+        currentPolyphony = max_polyphony;
+
         gain = 1.0f;
         lfoFreq = 0.0f;
         lfoDepth = 0.0f;
         prevDepth = 0.0f;
+        pitchBend = 1.0f;
 
         filterCutoff = 15000;
         prevFilterCutoff = 15000;
@@ -96,7 +102,12 @@ public:
         prevFilterCutoff = filterCutoff;
     }
 
-    float Process(float amps[NUM_POLY_VOICES])
+    void SetCurrentPolyphony(size_t numVoices)
+    {
+        currentPolyphony = numVoices;
+    }
+
+    float Process(float amps[max_polyphony])
     {
         // iterate LFO
         sinZ = sinZ + lfoFreq * cosZ;
@@ -109,24 +120,30 @@ public:
 
         float sum = 0.0f;
 
-        for (size_t i = 0; i < NUM_POLY_VOICES; i++)
+        for (size_t i = 0; i < currentPolyphony; i++)
         {
+            float fq = realFreqs[i];
+            if (pitchBend != 1.f)
+            {
+                fq *= pitchBend;
+            }
             /* Vibrato */
             if (lfoTarget == 0)
             {
-                float fq = realFreqs[i];
                 float vibrato = lfoDepth * vibratoDepths[i] * sinZ;
+                fq += vibrato;
                 oscillators[i].SetFreq(fq + vibrato);
                 /* Todo reset freq (once) if not vibrato */
             }
-            // else
-            // {
-            //   oscillators[i].SetFreq(fq);
-            // }
+            // oscillators[i].SetFreq(fq);
+            else if (pitchBend != 1.f)
+            {
+                oscillators[i].SetFreq(fq);
+            }
             sum += oscillators[i].Process() * amps[i];
         }
 
-        float sig = sum / NUM_POLY_VOICES;
+        float sig = sum / max_polyphony;
 
         /* Tremolo */
         if (lfoTarget == 1)
@@ -152,6 +169,11 @@ public:
         lfoTarget = target;
     }
 
+    void SetPitchBend(float fq)
+    {
+        pitchBend = fq;
+    }
+
     void IncrementLfoTarget()
     {
         lfoTarget++;
@@ -174,7 +196,7 @@ public:
             return;
 
         waveform = wf;
-        for (size_t i = 0; i < NUM_POLY_VOICES; i++)
+        for (size_t i = 0; i < max_polyphony; i++)
         {
             oscillators[i].SetWaveform(waveform);
 
@@ -245,7 +267,7 @@ public:
 
     void SetAmp(float amp)
     {
-        for (size_t i = 0; i < NUM_POLY_VOICES; i++)
+        for (size_t i = 0; i < max_polyphony; i++)
         {
             oscillators[i].SetAmp(amp);
         }

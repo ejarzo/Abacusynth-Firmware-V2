@@ -14,6 +14,7 @@ public:
     {
         active_ = false;
         velocity_ = 1.f;
+        startTime = 0.f;
         env_.Init(sample_rate, 1);
         setADSR(0.005f, 0.1f, 0.5f, 0.2f);
     }
@@ -45,6 +46,12 @@ public:
     {
         note_ = note;
         velocity_ = sqrt(newVelocity / 127.f);
+        startTime = System::GetNow();
+    }
+
+    uint32_t GetStartTime()
+    {
+        return startTime;
     }
 
     void TriggerNote()
@@ -70,6 +77,7 @@ public:
 private:
     Adsr env_;
     int note_;
+    uint32_t startTime;
     float velocity_;
     bool active_;
     bool env_gate_;
@@ -86,17 +94,24 @@ public:
 
     void Init(float sample_rate)
     {
+        currentPolyphony = max_voices;
         for (size_t i = 0; i < max_voices; i++)
         {
             voices[i].Init(sample_rate);
         }
     }
 
+    void SetCurrentPolyphony(size_t numVoices)
+    {
+        FreeAllVoices();
+        currentPolyphony = numVoices;
+    }
+
     float Process()
     {
         float sum;
         sum = 0.f;
-        for (size_t i = 0; i < max_voices; i++)
+        for (size_t i = 0; i < currentPolyphony; i++)
         {
             sum += voices[i].Process();
         }
@@ -127,7 +142,7 @@ public:
 
     void OnNoteOff(int noteNumber, int velocity)
     {
-        for (size_t i = 0; i < max_voices; i++)
+        for (size_t i = 0; i < currentPolyphony; i++)
         {
             Voice *v = &voices[i];
             if (v->IsActive() && v->GetNote() == noteNumber)
@@ -147,47 +162,54 @@ public:
 
     Voice *FindFreeVoice(int noteNumber)
     {
-        Voice *v = NULL;
+        if (currentPolyphony == 1)
+        {
+            return &voices[0];
+        }
 
         /* Re-trigger if same note */
-        for (size_t i = 0; i < max_voices; i++)
+        for (size_t i = 0; i < currentPolyphony; i++)
         {
             if (voices[i].GetNote() == noteNumber)
             {
-                v = &voices[i];
+                return &voices[i];
                 break;
             }
         }
 
-        if (v)
-            return v;
-
-        /* Find inactive voices */
-        for (size_t i = 0; i < max_voices; i++)
+        /* Find inactive voice */
+        for (size_t i = 0; i < currentPolyphony; i++)
         {
             if (!voices[i].IsActive())
             {
-                v = &voices[i];
-                break;
+                return &voices[i];
             }
         }
 
-        if (v)
-            return v;
-
         /* Find voices in the release phase */
-        for (size_t i = 0; i < max_voices; i++)
+        for (size_t i = 0; i < currentPolyphony; i++)
         {
             if (!voices[i].IsEnvGate())
             {
-                v = &voices[i];
-                break;
+                return &voices[i];
             }
         }
 
-        return v;
+        /* Steal oldest voice */
+        Voice *oldest = &voices[0];
+
+        for (size_t i = 1; i < currentPolyphony; i++)
+        {
+            if (voices[i].GetStartTime() < oldest->GetStartTime())
+            {
+                oldest = &voices[i];
+            }
+        }
+
+        return oldest;
     }
 
 private:
     Voice voices[max_voices];
+    size_t currentPolyphony;
 };
