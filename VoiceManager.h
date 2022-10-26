@@ -27,6 +27,23 @@ public:
         env_.SetTime(ADSR_SEG_RELEASE, r);
     }
 
+    void SetAttack(float v)
+    {
+        env_.SetTime(ADSR_SEG_ATTACK, v);
+    }
+    void SetDecay(float v)
+    {
+        env_.SetTime(ADSR_SEG_DECAY, v);
+    }
+    void SetSustain(float v)
+    {
+        env_.SetSustainLevel(v);
+    }
+    void SetRelease(float v)
+    {
+        env_.SetTime(ADSR_SEG_RELEASE, v);
+    }
+
     float Process()
     {
         if (active_)
@@ -127,11 +144,38 @@ public:
     {
         for (size_t i = 0; i < max_voices; i++)
         {
-            Voice *v = &voices[i];
-            v->setADSR(a, d, s, r);
+            voices[i].setADSR(a, d, s, r);
         }
     }
 
+    void SetAttack(float v)
+    {
+        for (size_t i = 0; i < max_voices; i++)
+        {
+            voices[i].SetAttack(v);
+        }
+    }
+    void SetDecay(float v)
+    {
+        for (size_t i = 0; i < max_voices; i++)
+        {
+            voices[i].SetDecay(v);
+        }
+    }
+    void SetSustain(float v)
+    {
+        for (size_t i = 0; i < max_voices; i++)
+        {
+            voices[i].SetSustain(v);
+        }
+    }
+    void SetRelease(float v)
+    {
+        for (size_t i = 0; i < max_voices; i++)
+        {
+            voices[i].SetRelease(v);
+        }
+    }
     // void OnNoteOn(int noteNumber, int velocity)
     // {
     //   Voice *v = FindFreeVoice(noteNumber);

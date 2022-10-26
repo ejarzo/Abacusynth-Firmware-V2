@@ -54,7 +54,7 @@ private:
             float fq = oscFreqs[i] * harmonicMultiplier;
             realFreqs[i] = fq;
             /* Vibrato depth is based on frequency */
-            vibratoDepths[i] = fq * 0.025f;
+            vibratoDepths[i] = fq * 0.015f;
             oscillators[i].SetFreq(fq);
         }
     }
@@ -90,7 +90,7 @@ public:
         harmonicMultiplier = 1;
 
         flt.SetFreq(filterCutoff);
-        flt.SetRes(0.1f);
+        flt.SetRes(0.2f);
         SetLfoTarget(1);
     }
 
@@ -112,6 +112,10 @@ public:
         // iterate LFO
         sinZ = sinZ + lfoFreq * cosZ;
         cosZ = cosZ - lfoFreq * sinZ;
+
+        // Slide LFO Depth
+        lfoDepth = lfoDepth * 0.05 + prevDepth * 0.95;
+        prevDepth = lfoDepth;
 
         if (!gainLineFinished)
         {
@@ -143,7 +147,7 @@ public:
             sum += oscillators[i].Process() * amps[i];
         }
 
-        float sig = sum / max_polyphony;
+        float sig = sum;
 
         /* Tremolo */
         if (lfoTarget == 1)
@@ -222,8 +226,11 @@ public:
     void SetLfoFreq(float freq)
     {
         lfoFreq = freq / 10000.0;
+
         /* Auto set depth based on freq */
-        SetLfoDepth(fclamp(freq / 4, 0.f, 1.f));
+        // SetLfoDepth(fclamp(freq / 4, 0.f, 1.f));
+
+        lfoDepth = fclamp(freq / 4, 0.f, 1.f);
     }
 
     void SetLfoDepth(float depth)
@@ -240,9 +247,10 @@ public:
         flt.SetFreq(freq);
     }
 
+    /* range from 0-1 */
     void SetRange(float range)
     {
-        float freq = mtof(range * 110.f + 50);
+        float freq = mtof(range * 80.f + 50);
         // float freq = rangeToFilterFreq(range);
         SetFilterCutoff(freq);
 

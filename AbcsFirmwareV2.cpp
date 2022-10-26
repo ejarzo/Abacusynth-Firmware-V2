@@ -34,6 +34,11 @@ using namespace daisysp;
 /* Pots */
 #define PIN_POT_GAIN 19
 
+#define PIN_POT_ATTACK 20
+#define PIN_POT_DECAY 21
+#define PIN_POT_SUSTAIN 22
+#define PIN_POT_RELEASE 23
+
 /* Distance Sensors */
 #define TCA_IDX_1 0
 #define TCA_IDX_2 1
@@ -99,6 +104,8 @@ DistanceSensorManager distanceSensorManager;
 /* Gain */
 AnalogControl gainPot;
 float gain = 1.f;
+
+float attackPotVal, decayPotVal, sustainPotVal, releasePotVal = 1.f;
 
 int adsrMode = 1;
 
@@ -208,6 +215,8 @@ void HandleMidiMessage(MidiEvent m)
         /* zero indexed */
         int channel = p.channel + 1;
 
+        /* TODO: move to voice manager, get polyphony from voice manager */
+
         /* "Hack" to set ADSR based on MIDI channel */
         if (adsrMode != channel)
         {
@@ -223,8 +232,12 @@ void HandleMidiMessage(MidiEvent m)
                 SetPolyphony(MAX_POLYPHONY);
                 break;
             case 4:
-                voiceHandler.setADSR(0.001f, 0.08f, 0.4f, 0.04f);
+                voiceHandler.setADSR(0.001f, 0.1f, 0.4f, 0.4f);
                 SetPolyphony(1);
+                break;
+            case 5:
+                voiceHandler.setADSR(0.003f, 0.3f, 0.1f, 0.5f);
+                SetPolyphony(MAX_POLYPHONY);
                 break;
 
             default:
@@ -238,26 +251,30 @@ void HandleMidiMessage(MidiEvent m)
         if (m.data[1] == 0)
             return;
 
+        /* TODO: better way of doing this? */
+
         /* Get voice */
-        Voice *v = voiceHandler.FindFreeVoice(p.note);
-        if (v == NULL)
+        Voice *freeVoice = voiceHandler.FindFreeVoice(p.note);
+        if (freeVoice == NULL)
             return;
 
         /* Set note but don't trigger */
-        v->OnNoteOn(p.note, p.velocity);
+        freeVoice->OnNoteOn(p.note, p.velocity);
 
-        /* Update oscillators with new note */
+        /* Update oscillators with all notes (do we need to do all?) */
+        /* Would need freeVoice index */
         for (size_t i = 0; i < currentPolyphony; i++)
         {
             Voice *v = &voices[i];
+            float note = mtof(v->GetNote());
             for (size_t j = 0; j < NUM_RODS; j++)
             {
-                rodOscillators[j].SetFundamentalFreq(mtof(v->GetNote()), i);
+                rodOscillators[j].SetFundamentalFreq(note, i);
             }
         }
 
         /* Trigger ADSR */
-        v->TriggerNote();
+        freeVoice->TriggerNote();
         break;
     }
     case NoteOff:
@@ -274,15 +291,23 @@ void HandleMidiMessage(MidiEvent m)
     {
         /* TODO: update with pitch bend */
         ControlChangeEvent p = m.AsControlChange();
+        float normal = ((float)p.value / 127.0f);
+
         switch (p.control_number)
         {
         case 1:
             // CC 1 for cutoff.
-            filt.SetFreq(mtof((float)p.value));
+            // filt.SetFreq(mtof((float)p.value));
+            voiceHandler.SetAttack(normal * 5.f + 0.002f);
             break;
         case 2:
-            // CC 2 for res.
-            filt.SetRes(((float)p.value / 127.0f));
+            voiceHandler.SetDecay(normal * 5.f + 0.05f);
+            break;
+        case 3:
+            voiceHandler.SetSustain(normal);
+            break;
+        case 4:
+            voiceHandler.SetRelease(normal * 5.f + 0.002f);
             break;
         default:
             break;
@@ -334,10 +359,18 @@ int main(void)
     filt.Init(sample_rate);
 
     /* ADC Setup */
-    AdcChannelConfig adcConfig;
-    adcConfig.InitSingle(hw.GetPin(PIN_POT_GAIN));
+    const int numAdcChannels = 5;
+    AdcChannelConfig adcConfig[numAdcChannels];
 
-    hw.adc.Init(&adcConfig, 1);
+    adcConfig[0].InitSingle(hw.GetPin(PIN_POT_GAIN));
+
+    adcConfig[1].InitSingle(hw.GetPin(PIN_POT_ATTACK));
+    adcConfig[2].InitSingle(hw.GetPin(PIN_POT_DECAY));
+    adcConfig[3].InitSingle(hw.GetPin(PIN_POT_SUSTAIN));
+    adcConfig[4].InitSingle(hw.GetPin(PIN_POT_RELEASE));
+
+    hw.adc.Init(adcConfig, numAdcChannels);
+
     hw.adc.Start();
 
     /* MIDI */
@@ -379,5 +412,30 @@ int main(void)
         gain = 1.f - hw.adc.GetFloat(0);
         if (gain < 0.04f)
             gain = 0.0f;
+
+        float newAttackVal = hw.adc.GetFloat(1);
+        if (abs(newAttackVal - attackPotVal) > 0.03f)
+        {
+            attackPotVal = newAttackVal;
+            voiceHandler.SetAttack(newAttackVal * 5.f);
+        }
+        float newDecayVal = hw.adc.GetFloat(2);
+        if (abs(newDecayVal - decayPotVal) > 0.03f)
+        {
+            decayPotVal = newDecayVal;
+            voiceHandler.SetDecay(newDecayVal * 5.f);
+        }
+        float newSustainVal = hw.adc.GetFloat(3);
+        if (abs(newSustainVal - sustainPotVal) > 0.03f)
+        {
+            sustainPotVal = newSustainVal;
+            voiceHandler.SetSustain(newSustainVal);
+        }
+        float newReleaseVal = hw.adc.GetFloat(4);
+        if (abs(newReleaseVal - releasePotVal) > 0.03f)
+        {
+            releasePotVal = newReleaseVal;
+            voiceHandler.SetRelease(newReleaseVal * 5.f);
+        }
     }
 }
