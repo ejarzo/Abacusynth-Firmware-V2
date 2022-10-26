@@ -1,6 +1,6 @@
 # Abacusynth Firmware V2
 
-Synthesizer code for the Abacusynth. Version 1 used DaisuDuino library for Arduino, this code just uses libDaisy.
+Synthesizer code for the Abacusynth. [Version 1](https://github.com/ejarzo/Abacusynth-Firmware) used DaisuDuino library for Arduino, this code just uses libDaisy.
 
 ![1O7A8617 2](https://user-images.githubusercontent.com/9386882/168907830-4d59f463-a877-408f-b606-7ba3c6b1a394.jpeg)
 
